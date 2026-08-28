@@ -1,0 +1,56 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 UnionTech Software Technology Co., Ltd.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+export builddir=build
+export reportdir=build-ut
+scriptdir=$(cd $(dirname $0); pwd)
+export projectdir=$(cd "$scriptdir/.."; pwd)
+
+rm -r $builddir
+rm -r ../$builddir
+rm -r $reportdir
+rm -r ../$reportdir
+mkdir ../$builddir
+mkdir ../$reportdir
+cd ../$builddir
+#编译
+cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SAFETYTEST_ARG="CMAKE_SAFETYTEST_ARG_ON" ..
+make -j$(nproc)
+#生成asan日志和ut测试xml结果
+export ASAN_OPTIONS=abort_on_error=0:detect_leaks=0
+export UBSAN_OPTIONS=halt_on_error=0
+
+# 运行测试并生成 gtest XML 报告
+GTEST_XML_DIR="$projectdir/$builddir/report"
+mkdir -p "$GTEST_XML_DIR"
+set +e
+./tests/deepin-editor-test --gtest_output="xml:$GTEST_XML_DIR/report_deepin-editor.xml"
+test_exit_code=$?
+set -e
+
+workdir=$(cd ../$(dirname $0)/$builddir; pwd)
+
+mkdir -p report
+#统计代码覆盖率并生成html报告
+lcov -d $workdir -c -o ./coverage.info
+
+lcov --extract ./coverage.info '*/src/*' -o ./coverage.info
+
+lcov --remove ./coverage.info '*/tests/*' -o ./coverage.info
+
+genhtml -o ./html ./coverage.info
+
+mv ./html/index.html ./html/cov_deepin-editor.html
+#对asan、ut、代码覆盖率结果收集至指定文件夹
+cp -r html ../$reportdir/
+cp -r report ../$reportdir/
+cp asan*.log* ../$reportdir/asan_deepin-editor.log 2>/dev/null || true
+
+# 生成摘要 JSON
+echo "==> Generating summary JSON: $projectdir/$reportdir/ut-summary.json"
+
+python3 "$scriptdir/gen-ut-summary.py"
+
+exit $test_exit_code
